@@ -46,12 +46,90 @@ void xcout(unsigned char c){
    usart_send_blocking(USART1, set[c&0x0f]);
 }
 
+
+void split_midi(char *buf, int len, void* arg,void (*callback)(char*,int,void*)){
+    int i=0;
+    usart_send_blocking(USART1, 'm');
+    xcout(len);
+
+    while(i<len){
+        switch (buf[i]&0x0f){
+            case 0x00: //Misc event RFU
+                callback(buf+i,3,arg);
+                i+=3;
+                break;
+             case 0x01: //Cable event RFU
+                callback(buf+i,3,arg);
+                i+=3;
+                break;
+             case 0x02: //SysCom
+                callback(buf+i,3,arg);
+                i+=3;
+                break;
+             case 0x03: //SysCom
+                callback(buf+i,4,arg);
+                i+=4;
+                break;
+             case 0x04: //sysex
+                callback(buf+i,4,arg);
+                i+=4;
+                break;
+             case 0x05: //sysex
+                callback(buf+i,2,arg);
+                i+=2;
+                break;
+             case 0x06: //sysex
+                callback(buf+i,3,arg);
+                i+=3;
+                break;
+            case 0x07: //sysex
+                callback(buf+i,4,arg);
+                i+=4;
+                break;
+
+            case 0x08: //Note off
+            case 0x09: //Note on
+            case 0x0a: //Poly Keypress
+            case 0x0b: //CC
+            case 0x0e: //Pitch
+                callback(buf+i,4,arg);
+                i+=4;
+                break;
+            case 0x0c://Prog
+            case 0x0d://Pressure
+                callback(buf+i,3,arg);
+                i+=3;
+                break;
+            case 0x0f: //Sigle byte ??
+                callback(buf+i,2,arg);
+                i+=2;
+                break;
+        }
+    }
+};
+
 /*
  * Table B-1: MIDI Adapter Device Descriptor
  */
 
-static void usbmidi_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
-{
+
+
+void display_midi(char *buf, int len, void* arg){
+    (void)arg;
+
+    usart_send_blocking(USART1, 'M');
+    xcout(buf[0]);
+    int i=1;
+    usart_send_blocking(USART1, '_');
+    for(;i<len;i++){
+        xcout(buf[i]);
+        usart_send_blocking(USART3, buf[i]);
+    }
+    usart_send_blocking(USART1, ' ');
+
+}
+
+static void usbmidi_data_rx_cb(usbd_device *usbd_dev, uint8_t ep) {
 	(void)ep;
 
 	char buf[64];
@@ -63,27 +141,19 @@ static void usbmidi_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 	 */
         uint8_t handled=0;
 	if (len>=4) {
-            if((buf[0]==0x07 || buf[0]==0x06)){ //sysex
-                if(buf[1]==0xf0){
-                    usart_send_blocking(USART1, 'm');
-                    usart_send_blocking(USART1, 's');
-                    while (usbd_ep_write_packet(usbd_dev, EP_MIDI_O1, sysex_identity,
-                                sizeof(sysex_identity)) == 0);
-                    handled=1;
-                }
+            if((buf[0]==0x07 || buf[0]==0x06) && buf[1]==0xf0){ //sysex
+                usart_send_blocking(USART1, 'M');
+                usart_send_blocking(USART1, 's');
+                while (usbd_ep_write_packet(usbd_dev, EP_MIDI_O1, sysex_identity,
+                            sizeof(sysex_identity)) == 0);
+                handled=1;
             }
 	}
 
         if(!handled){
-            usart_send_blocking(USART1, 'M');
-            xcout(buf[0]);
-            int i=1;
-            usart_send_blocking(USART1, ' ');
-            for(;i<len;i++){
-                xcout(buf[i]);
-                usart_send_blocking(USART3, buf[i]);
-            }
-            usart_send_blocking(USART1, '_');
+            split_midi(buf, len, 0, display_midi);
+            usart_send_blocking(USART1, '\r');
+            usart_send_blocking(USART1, '\n');
         }
 	gpio_toggle(GPIOB, GPIO8);
 }

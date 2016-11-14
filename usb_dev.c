@@ -145,6 +145,7 @@ static const struct usb_interface_descriptor audio_control_iface[] = {{
 	.extralen = sizeof(audio_control_functional_descriptors)
 } };
 
+#define DUALJ 1
 /*
  * Class-specific MIDI streaming interface descriptor
  */
@@ -154,7 +155,7 @@ static const struct {
 	struct usb_midi_in_jack_descriptor in_external;
 	struct usb_midi_out_jack_descriptor out_embedded1;
 	struct usb_midi_out_jack_descriptor out_external1;
-#ifdef DUAL
+#ifdef DUALJ
 	struct usb_midi_out_jack_descriptor out_embedded2;
 	struct usb_midi_out_jack_descriptor out_external2;
 #endif
@@ -221,7 +222,7 @@ static const struct {
 			.iJack = 0x00,
 		},
 	},
-#ifdef DUAL
+#ifdef DUALJ
 	/* Table B-9: MIDI Adapter MIDI OUT Jack Descriptor (Embedded) */
 	.out_embedded2 = {
 		.head = {
@@ -303,7 +304,7 @@ static const struct {
 		.bDescriptorType = CS_INTERFACE,
 		.bDescriptorSubtype = USB_CDC_TYPE_CALL_MANAGEMENT,
 		.bmCapabilities = 0,
-		.bDataInterface = 1,
+		.bDataInterface = 3,
 	},
 	.acm = {
 		.bFunctionLength = sizeof(struct usb_cdc_acm_descriptor),
@@ -315,8 +316,8 @@ static const struct {
 		.bFunctionLength = sizeof(struct usb_cdc_union_descriptor),
 		.bDescriptorType = CS_INTERFACE,
 		.bDescriptorSubtype = USB_CDC_TYPE_UNION,
-		.bControlInterface = 0,
-		.bSubordinateInterface0 = 1, 
+		.bControlInterface = 2,
+		.bSubordinateInterface0 = 3, 
 	 }
 };
 
@@ -349,7 +350,7 @@ static const struct usb_endpoint_descriptor data_endp[] = {{
 static const struct usb_interface_descriptor comm_iface[] = {{
 	.bLength = USB_DT_INTERFACE_SIZE,
 	.bDescriptorType = USB_DT_INTERFACE,
-	.bInterfaceNumber = 0,
+	.bInterfaceNumber = 2,
 	.bAlternateSetting = 0,
 	.bNumEndpoints = 1,
 	.bInterfaceClass = USB_CLASS_CDC,
@@ -366,7 +367,7 @@ static const struct usb_interface_descriptor comm_iface[] = {{
 static const struct usb_interface_descriptor data_iface[] = {{
 	.bLength = USB_DT_INTERFACE_SIZE,
 	.bDescriptorType = USB_DT_INTERFACE,
-	.bInterfaceNumber = 1,
+	.bInterfaceNumber = 3,
 	.bAlternateSetting = 0,
 	.bNumEndpoints = 2,
 	.bInterfaceClass = USB_CLASS_DATA,
