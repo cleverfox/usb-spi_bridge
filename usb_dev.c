@@ -20,7 +20,13 @@ static const struct usb_device_descriptor dev = {
 /*
  * Midi specific endpoint descriptors.
  */
-static const struct usb_midi_endpoint_descriptor midi_bulk_endp[] = {{
+struct usb_midi_endpoint_descriptor2 {
+	struct usb_midi_endpoint_descriptor_head head;
+	struct usb_midi_endpoint_descriptor_body jack[2];
+} __attribute__((packed));
+
+
+static const struct usb_midi_endpoint_descriptor midi_bulk_endp_out = {
     /* Table B-12: MIDI Adapter Class-specific Bulk OUT Endpoint
      * Descriptor
      */
@@ -30,10 +36,10 @@ static const struct usb_midi_endpoint_descriptor midi_bulk_endp[] = {{
         .bDescriptorSubType = USB_MIDI_SUBTYPE_MS_GENERAL,
         .bNumEmbMIDIJack = 1,
     },
-        .jack[0] = {
-            .baAssocJackID = 0x01,
-        },
-}, {
+        .jack[0] = { .baAssocJackID = 0x01 }, 
+};
+
+static const struct usb_midi_endpoint_descriptor midi_bulk_endp_in = {
     /* Table B-14: MIDI Adapter Class-specific Bulk IN Endpoint
      * Descriptor
      */
@@ -43,10 +49,9 @@ static const struct usb_midi_endpoint_descriptor midi_bulk_endp[] = {{
         .bDescriptorSubType = USB_MIDI_SUBTYPE_MS_GENERAL,
         .bNumEmbMIDIJack = 1,
     },
-        .jack[0] = {
-            .baAssocJackID = 0x04,
-        },
-} };
+        .jack[0] = { .baAssocJackID = 0x04 }, 
+//        .jack[1] = { .baAssocJackID = 0x06 }, 
+};
 
 /*
  * Standard endpoint descriptors
@@ -61,8 +66,8 @@ static const struct usb_endpoint_descriptor bulk_endp[] = {
         .wMaxPacketSize = 0x40,
         .bInterval = 0x00,
 
-        .extra = &midi_bulk_endp[0],
-        .extralen = sizeof(midi_bulk_endp[0])
+        .extra = &midi_bulk_endp_out,
+        .extralen = sizeof(midi_bulk_endp_out)
     }, { //from me to computer
         .bLength = USB_DT_ENDPOINT_SIZE,
         .bDescriptorType = USB_DT_ENDPOINT,
@@ -71,8 +76,8 @@ static const struct usb_endpoint_descriptor bulk_endp[] = {
         .wMaxPacketSize = 0x40,
         .bInterval = 0x00,
 
-        .extra = &midi_bulk_endp[1],
-        .extralen = sizeof(midi_bulk_endp[1])
+        .extra = &midi_bulk_endp_in,
+        .extralen = sizeof(midi_bulk_endp_in)
     }
 };
 
@@ -123,10 +128,16 @@ static const struct usb_interface_descriptor audio_control_iface[] = {{
  */
 const struct {
     struct usb_midi_header_descriptor header;
+
     struct usb_midi_in_jack_descriptor in_embedded1;
+    struct usb_midi_out_jack_descriptor out_external1;
+
     struct usb_midi_in_jack_descriptor in_external1;
     struct usb_midi_out_jack_descriptor out_embedded1;
-    struct usb_midi_out_jack_descriptor out_external1;
+
+    struct usb_midi_in_jack_descriptor in_external2;
+    struct usb_midi_out_jack_descriptor out_embedded2;
+
 } __attribute__((packed)) midi_streaming_functional_descriptors = {
     /* Table B-6: Midi Adapter Class-specific MS Interface Descriptor */
     .header = {
@@ -184,6 +195,34 @@ const struct {
         },
         .source[0] = {
             .baSourceID = 0x03,
+            .baSourcePin = 0x01,
+        },
+        .tail = {
+            .iJack = 0x00,
+        }
+    },
+
+    /* Table B-8: MIDI Adapter MIDI IN Jack Descriptor (External) */
+    .in_external2 = {
+        .bLength = sizeof(struct usb_midi_in_jack_descriptor),
+        .bDescriptorType = USB_AUDIO_DT_CS_INTERFACE,
+        .bDescriptorSubtype = USB_MIDI_SUBTYPE_MIDI_IN_JACK, //2
+        .bJackType = USB_MIDI_JACK_TYPE_EXTERNAL, //2
+        .bJackID = 0x05,
+        .iJack = 0x00,
+    },
+    /* Table B-9: MIDI Adapter MIDI OUT Jack Descriptor (Embedded) */
+    .out_embedded2 = {
+        .head = {
+            .bLength = sizeof(struct usb_midi_out_jack_descriptor),
+            .bDescriptorType = USB_AUDIO_DT_CS_INTERFACE,
+            .bDescriptorSubtype = USB_MIDI_SUBTYPE_MIDI_OUT_JACK, //3
+            .bJackType = USB_MIDI_JACK_TYPE_EMBEDDED,  //1
+            .bJackID = 0x06,
+            .bNrInputPins = 1,
+        },
+        .source[0] = {
+            .baSourceID = 0x05,
             .baSourcePin = 0x01,
         },
         .tail = {
@@ -342,7 +381,7 @@ static const char * usb_strings[] = {
 };
 
 /* Buffer to be used for control requests. */
-uint8_t usbd_control_buffer[128];
+uint8_t usbd_control_buffer[256];
 
 
 usbd_device * init_usb(){
