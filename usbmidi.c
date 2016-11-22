@@ -5,8 +5,50 @@
 #include <libopencm3/stm32/desig.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
+#include <libopencm3/cm3/systick.h>
+
+#include <atom.h>
+#include <atomsem.h>
+#include <atomqueue.h>
+#include <atomtimer.h>
+
 #include "hw.h"
 #include "usb_dev.h"
+
+static uint8_t idle_stack[256];
+static uint8_t master_thread_stack[512];
+static ATOM_TCB master_thread_tcb;
+
+
+static ATOM_QUEUE uart0_rx;
+static uint8_t uart0_rx_storage[64];
+
+static ATOM_QUEUE uart3_tx;
+static uint8_t uart3_tx_storage[16];
+
+static ATOM_QUEUE uart3_rx;
+static uint8_t uart3_rx_storage[16];
+
+static ATOM_QUEUE uart2_tx;
+static uint8_t uart2_tx_storage[16];
+
+static ATOM_QUEUE uart2_rx;
+static uint8_t uart2_rx_storage[16];
+
+static ATOM_QUEUE uart1_tx;
+static uint8_t uart1_tx_storage[64];
+
+static ATOM_QUEUE uart1_rx;
+static uint8_t uart1_rx_storage[64];
+
+void _fault(int, int, const char*);
+int u_write(int file, uint8_t *ptr, int len);
+#define fault(code) _fault(code,__LINE__,__FUNCTION__)
+void _fault(__unused int code, __unused int line, __unused const char* function){
+    cm_mask_interrupts(true);
+    while(1){
+    }
+};
 
 
 usbd_device *usb;
@@ -159,19 +201,17 @@ static void cdcacm_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 {
     (void)ep;
 
-    char buf[64];
+    uint8_t buf[64];
     int len = usbd_ep_read_packet(usbd_dev, EP_CDC0_R, buf, 64);
 
     if (len) {
         usbd_ep_write_packet(usbd_dev, EP_CDC0_T, buf, len);
         buf[len] = 0;
     }
-    usart_send_blocking(USART1, 'S');
-    int i=0;
-    for(;i<len;i++){
-        xcout(buf[i]);
-    }
-    gpio_toggle(GPIOB, GPIO9);
+
+    uint8_t x='S';
+    atomQueuePut(&uart1_tx,0, &x);
+    u_write(1,buf,len);
 }
 
 static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *req, uint8_t **buf,
@@ -276,89 +316,106 @@ static void button_poll(usbd_device *usbd_dev)
     }
 }
 
-void usart2_isr(void) {
+
+
+
+void usart1_isr(void) {
+    static uint8_t data = 'A';
+    atomIntEnter();
+
     if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
             ((USART_SR(USART1) & USART_SR_RXNE) != 0)) {
-        //button_state=!button_state;
-        //button_send_event(usb, button_state);
+        data = usart_recv(USART1);
+
+        if(data=='\r' || data=='\n'){
+            data='\r';
+            u_write(1,(uint8_t*) &data, 1);
+            data='\n';
+            u_write(1,(uint8_t*) &data, 1);
+        }else{
+            u_write(1,(uint8_t*) &data, 1);
+            button_send_event(usb, data);
+        }
+
+    }
+
+    /* Check if we were called because of TXE. */
+    if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
+            ((USART_SR(USART1) & USART_SR_TXE) != 0)) {
+        uint8_t status = atomQueueGet(&uart1_tx, 0, &data);
+        if(status == ATOM_OK){
+            usart_send_blocking(USART1, data);
+        }else{
+            USART_CR1(USART1) &= ~USART_CR1_TXEIE;
+        }
+    }
+    atomIntExit(0);
+}
+
+void usart2_isr(void) {
+    static uint8_t data = 'A';
+    atomIntEnter();
+    if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
+            ((USART_SR(USART1) & USART_SR_RXNE) != 0)) {
+        data = usart_recv(USART2);
+        atomQueuePut(&uart2_rx,0, (uint8_t*) &data);
     }
 
     /* Check if we were called because of TXE. */
     if (((USART_CR1(USART2) & USART_CR1_TXEIE) != 0) &&
             ((USART_SR(USART2) & USART_SR_TXE) != 0)) {
-        /*
-           uint8_t status = atomQueueGet(&uart2_tx, 0, &data);
-           if(status == ATOM_OK){
-           usart_send_blocking(USART2, data);
-           }else{
-           */
-        USART_CR1(USART2) &= ~USART_CR1_TXEIE;
-    }
-    }
-
-
-    void usart1_isr(void) {
-        static uint8_t data = 'A';
-        //atomIntEnter();
-
-        if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
-                ((USART_SR(USART1) & USART_SR_RXNE) != 0)) {
-            data = usart_recv(USART1);
-
-            if(data=='\r' || data=='\n'){
-                usart_send_blocking(USART1, '\r');
-                usart_send_blocking(USART1, '\n');
-            }else{
-                usart_send_blocking(USART1, data);
-                button_send_event(usb, data);
-            }
-
-            //atomQueuePut(&uart1_rx,0, (uint8_t*) &data);
+        uint8_t status = atomQueueGet(&uart2_tx, 0, &data);
+        if(status == ATOM_OK){
+            usart_send_blocking(USART2, data);
+        }else{
+            USART_CR1(USART2) &= ~USART_CR1_TXEIE;
         }
+    }
+    atomIntExit(0);
+}
 
-        /* Check if we were called because of TXE. */
-        if (((USART_CR1(USART1) & USART_CR1_TXEIE) != 0) &&
-                ((USART_SR(USART1) & USART_SR_TXE) != 0)) {
-            /*
-               uint8_t status = atomQueueGet(&uart1_tx, 0, &data);
-               if(status == ATOM_OK){
-               usart_send_blocking(USART1, data);
-               }else{
-               */
-            USART_CR1(USART1) &= ~USART_CR1_TXEIE;
-            //}
-        }
-        //atomIntExit(0);
+void usart3_isr(void) {
+    static uint8_t data = 'A';
+    atomIntEnter();
+    if (((USART_CR1(USART3) & USART_CR1_RXNEIE) != 0) &&
+            ((USART_SR(USART3) & USART_SR_RXNE) != 0)) {
+        data = usart_recv(USART3);
+        atomQueuePut(&uart3_rx,0, (uint8_t*) &data);
     }
 
-    void usart3_isr(void) {
-        static uint8_t data = 'A';
-        //atomIntEnter();
-        if (((USART_CR1(USART3) & USART_CR1_RXNEIE) != 0) &&
-                ((USART_SR(USART3) & USART_SR_RXNE) != 0)) {
-            data = usart_recv(USART3);
-            usart_send_blocking(USART1, data);
-
-            //atomQueuePut(&uart3_rx,0, (uint8_t*) &data);
-        }
-
-        /* Check if we were called because of TXE. */
-        if (((USART_CR1(USART3) & USART_CR1_TXEIE) != 0) &&
-                ((USART_SR(USART3) & USART_SR_TXE) != 0)) {
-            /*
-               uint8_t status = atomQueueGet(&uart3_tx, 0, &data);
-               if(status == ATOM_OK){
-               usart_send_blocking(USART3, data);
-               }else{
-               */
+    /* Check if we were called because of TXE. */
+    if (((USART_CR1(USART3) & USART_CR1_TXEIE) != 0) &&
+            ((USART_SR(USART3) & USART_SR_TXE) != 0)) {
+        uint8_t status = atomQueueGet(&uart3_tx, 0, &data);
+        if(status == ATOM_OK){
+            usart_send_blocking(USART3, data);
+        }else{
             USART_CR1(USART3) &= ~USART_CR1_TXEIE;
-            //}
         }
-        //atomIntExit(0);
     }
+    atomIntExit(0);
+}
 
+static void master_thread(uint32_t args __maybe_unused) {
+    while(1){
+        atomTimerDelay(SYSTEM_TICKS_PER_SEC);
+        //usbd_poll(usb);
+    }
+}
 
-    int main(void) {
+void usb_wakeup_isr(void) {
+    atomIntEnter();
+    usbd_poll(usb);
+    atomIntExit(0);
+}
+
+void usb_lp_can_rx0_isr(void) {
+    atomIntEnter();
+    usbd_poll(usb);
+    atomIntExit(0);
+}
+
+int main(void) {
         rcc_clock_setup_in_hsi_out_48mhz();
         //rcc_clock_setup_in_hse_8mhz_out_24mhz();
 
@@ -375,6 +432,15 @@ void usart2_isr(void) {
         gpio_set_mode(GPIOA, GPIO_MODE_INPUT, 0, GPIO15);
 
         usart_setup();
+
+        cm_mask_interrupts(true);
+        systick_set_frequency(SYSTEM_TICKS_PER_SEC, 24000000);
+        systick_interrupt_enable();
+        systick_counter_enable();
+
+
+        nvic_set_priority(NVIC_PENDSV_IRQ, 0xFF);
+        nvic_set_priority(NVIC_SYSTICK_IRQ, 0xFE);
 
         //desig_get_unique_id_as_string(usb_serial_number, sizeof(usb_serial_number));
         //usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev, &config, usb_strings, 3, usbd_control_buffer, sizeof(usbd_control_buffer));
@@ -416,13 +482,66 @@ void usart2_isr(void) {
         usb=init_usb();
         usbd_register_set_config_callback(usb, usb_set_config);
 
+        nvic_enable_irq(NVIC_USB_LP_CAN_RX0_IRQ);
+        nvic_enable_irq(NVIC_USB_WAKEUP_IRQ);
+
         gpio_set(GPIOA, GPIO8);
 
+        if(atomOSInit(idle_stack, sizeof(idle_stack), FALSE) != ATOM_OK) 
+            fault(1);
+
+
+        if (atomQueueCreate (&uart1_rx, uart1_rx_storage, sizeof(uint8_t), sizeof(uart1_rx_storage)) != ATOM_OK) 
+            fault(2);
+        if (atomQueueCreate (&uart1_tx, uart1_tx_storage, sizeof(uint8_t), sizeof(uart1_tx_storage)) != ATOM_OK) 
+            fault(3);
+        if (atomQueueCreate (&uart2_rx, uart2_rx_storage, sizeof(uint8_t), sizeof(uart2_rx_storage)) != ATOM_OK) 
+            fault(4);
+        if (atomQueueCreate (&uart2_tx, uart2_tx_storage, sizeof(uint8_t), sizeof(uart2_tx_storage)) != ATOM_OK) 
+            fault(5);
+        if (atomQueueCreate (&uart3_rx, uart3_rx_storage, sizeof(uint8_t), sizeof(uart3_rx_storage)) != ATOM_OK) 
+            fault(6);
+        if (atomQueueCreate (&uart3_tx, uart3_tx_storage, sizeof(uint8_t), sizeof(uart3_tx_storage)) != ATOM_OK) 
+            fault(7);
+
+        atomThreadCreate(&master_thread_tcb, 10, master_thread, 0,
+                master_thread_stack, sizeof(master_thread_stack), TRUE);
+
+        atomOSStart();
         while (1){
-            usbd_poll(usb);
             button_poll(usb);
         }
     }
+
+int u_write(int file, uint8_t *ptr, int len) {
+    int i;
+    for (i = 0; i < len; i++){
+        switch(file){
+            case 1: //RS-232
+                atomQueuePut(&uart1_tx,-1, (uint8_t*) &ptr[i]);
+                break;
+            case 2: //DISPLAY
+             //   atomQueuePut(&uart2_tx,0, (uint8_t*) &ptr[i]);
+                break;
+            case 3: //USB
+             //   atomQueuePut(&uart3_tx,0, (uint8_t*) &ptr[i]);
+                break;
+        }
+    }
+    switch(file){
+        case 1:
+            USART_CR1(USART1) |= USART_CR1_TXEIE;
+            break;
+        case 3:
+            USART_CR1(USART3) |= USART_CR1_TXEIE;
+            break;
+        case 2:
+            USART_CR1(USART2) |= USART_CR1_TXEIE;
+            break;
+    }
+    return i;
+}
+
 
 
 /*
