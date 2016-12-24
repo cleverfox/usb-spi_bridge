@@ -89,7 +89,8 @@ void usart2_setup(void) {
 
     // Setup GPIO pin GPIO_USART1_RE_RX on GPIO port A for receive.
     gpio_set_mode(GPIOA, GPIO_MODE_INPUT,
-            GPIO_CNF_INPUT_FLOAT, GPIO_USART2_RX);
+            GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_USART2_RX);
+    gpio_set(GPIOA, GPIO_USART2_RX);
 
     // Setup UART parameters. 
     usart_set_baudrate(USART2, 31250);
@@ -98,10 +99,10 @@ void usart2_setup(void) {
     usart_set_stopbits(USART2, USART_STOPBITS_1);
 
     usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
-    usart_set_mode(USART2, USART_MODE_TX);
+    usart_set_mode(USART2, USART_MODE_TX_RX);
 
     /* Enable USART1 Receive interrupt. */
-//    USART_CR1(USART2) |= USART_CR1_RXNEIE;
+    USART_CR1(USART2) |= USART_CR1_RXNEIE;
 
     /* Finally enable the USART. */
     usart_enable(USART2);
