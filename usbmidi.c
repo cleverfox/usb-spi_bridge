@@ -11,6 +11,7 @@
 #include <atomsem.h>
 #include <atomqueue.h>
 #include <atomtimer.h>
+#include <string.h>
 
 #include "hw.h"
 #include "usb_dev.h"
@@ -34,20 +35,27 @@ static uint8_t uart0_rx_storage[64];
 static ATOM_QUEUE uart3_tx;
 static uint8_t uart3_tx_storage[64];
 
+/*
 static ATOM_QUEUE uart3_rx;
 static uint8_t uart3_rx_storage[16];
+*/
 
 static ATOM_QUEUE uart2_tx;
 static uint8_t uart2_tx_storage[288];
 
+/*
 static ATOM_QUEUE uart2_rx;
 static uint8_t uart2_rx_storage[16];
+*/
 
 static ATOM_QUEUE uart1_tx;
 static uint8_t uart1_tx_storage[1024];
 
 static ATOM_QUEUE uart1_rx;
 static uint8_t uart1_rx_storage[64];
+
+static ATOM_QUEUE midi_input;
+static uint32_t midi_input_storage[64];
 
 void _fault(int, int, const char*);
 int u_write(int file, uint8_t *ptr, int len);
@@ -94,9 +102,19 @@ const uint8_t sysex_identity[] = {
     0,0,	/* Padding */
 };
 
+struct midi_uart {
+    union {
+        uint8_t u8[4];
+        uint32_t u32;
+    } recv;
+    uint8_t uart_id;
+    uint8_t rp;
+    uint8_t expected;
+    uint8_t sysex;
+};
+void process_midi_uart(uint8_t data, struct midi_uart *mi);
 
 void xcout(unsigned char c);
-void split_midi(char *buf, int len, void* arg,void (*callback)(char*,int,void*));
 
 void xcout(unsigned char c){
     static char set[]="0123456789ABCDEF";
@@ -106,85 +124,6 @@ void xcout(unsigned char c){
     s_write(1,s,2);
 }
 
-
-void split_midi(char *buf, int len, void* arg,void (*callback)(char*,int,void*)){
-    int i=0;
-    usart_send_blocking(USART1, 'm');
-    xcout(len);
-
-    while(i<len){
-        switch (buf[i]&0x0f){
-            case 0x00: //Misc event RFU
-                callback(buf+i,3,arg);
-                i+=3;
-                break;
-            case 0x01: //Cable event RFU
-                callback(buf+i,3,arg);
-                i+=3;
-                break;
-            case 0x02: //SysCom
-                callback(buf+i,3,arg);
-                i+=3;
-                break;
-            case 0x03: //SysCom
-                callback(buf+i,4,arg);
-                i+=4;
-                break;
-            case 0x04: //sysex
-                callback(buf+i,4,arg);
-                i+=4;
-                break;
-            case 0x05: //sysex
-                callback(buf+i,2,arg);
-                i+=2;
-                break;
-            case 0x06: //sysex
-                callback(buf+i,3,arg);
-                i+=3;
-                break;
-            case 0x07: //sysex
-                callback(buf+i,4,arg);
-                i+=4;
-                break;
-
-            case 0x08: //Note off
-            case 0x09: //Note on
-            case 0x0a: //Poly Keypress
-            case 0x0b: //CC
-            case 0x0e: //Pitch
-                callback(buf+i,4,arg);
-                i+=4;
-                break;
-            case 0x0c://Prog
-            case 0x0d://Pressure
-                callback(buf+i,3,arg);
-                i+=3;
-                break;
-            case 0x0f: //Sigle byte ??
-                callback(buf+i,2,arg);
-                i+=2;
-                break;
-        }
-    }
-};
-
-void display_midi(char *buf, int len, void* arg);
-void display_midi(char *buf, int len, void* arg){
-    (void)arg;
-
-    usart_send_blocking(USART1, 'M');
-    xcout(buf[0]);
-    int i=1;
-    usart_send_blocking(USART1, '_');
-    s_write(2,buf+1,len-1);
-    s_write(3,buf+1,len-1);
-    for(;i<len;i++){
-        xcout(buf[i]);
-//        usart_send_blocking(USART3, buf[i]);
-    }
-    usart_send_blocking(USART1, ' ');
-
-}
 
 static void usbmidi_data_tx_cb(usbd_device *usbd_dev __maybe_unused, uint8_t ep __maybe_unused) {
     s_write(1,"%",1);
@@ -492,7 +431,7 @@ inline int midilen(uint8_t i){
             return 2;
         case 0xe0: //Pitch wheel
             return 3;
-        case 0xff:
+        case 0xf0:
             switch(i){
                 case 0xf0: //sysex start
                     return 0xff;
@@ -526,85 +465,96 @@ inline int midilen(uint8_t i){
     return -1;
 };
 
+
+
+void process_midi_uart(uint8_t data, struct midi_uart *mi){
+    /*
+       u_write(1,(uint8_t*) ">", 1);
+       xcout(data);
+       u_write(1,(uint8_t*) "<", 1);
+       */
+    uint8_t done=0;
+    if(mi->rp==0 || ((data&0x80) == 0x80)){
+        if(data==0xf0){
+            mi->recv.u8[0]=0x04;
+            mi->recv.u8[1]=data;
+            mi->expected=4;
+            mi->rp=2;
+            mi->sysex=1;
+        }else if(data==0xf7 && mi->sysex){
+            if(mi->rp==2){
+                mi->recv.u8[0]=0x05;
+                mi->expected=2;
+            }
+            if(mi->rp==3){
+                mi->recv.u8[0]=0x06;
+                mi->expected=3;
+            }
+            if(mi->rp==4){
+                mi->recv.u8[0]=0x07;
+                mi->expected=4;
+            }
+            done=2;
+            mi->sysex=0;
+        }else{
+            mi->sysex=0;
+            mi->expected=midilen(data);
+            mi->recv.u8[0]=(data>>4)&0x0f;
+            mi->recv.u8[1]=data;
+            mi->rp=2;
+            if(mi->expected==1){
+                mi->recv.u8[2]=0;
+                mi->recv.u8[3]=0;
+                done=1;
+            }else if(mi->expected==2)
+                mi->recv.u8[3]=0;
+            mi->expected++; //adjust with USB header
+        }
+    }else if(mi->rp<mi->expected){
+        mi->recv.u8[mi->rp]=data;
+        mi->rp++;
+        if(mi->rp>=mi->expected){
+            if(mi->sysex)
+                mi->rp=1;
+            else
+                mi->rp=2;
+            done=1;
+        }
+    }else{
+        mi->rp=0;
+    }
+    if(done){
+        /*
+        xcout(mi->recv.u8[0]);
+        xcout(mi->recv.u8[1]);
+        if(mi->expected>2)
+            xcout(mi->recv.u8[2]);
+        if(mi->expected>3)
+            xcout(mi->recv.u8[3]);
+        u_write(1,(uint8_t*) "\r\n", 2);
+        */
+        mi->recv.u8[0]|=(mi->uart_id<<8);
+        atomQueuePut(&midi_input,-1, (uint8_t*) &mi->recv.u32);
+    }
+
+}
+
 void usart2_isr(void) {
-    static uint8_t data = 'A';
-    static uint8_t recv[4]={0,0,0,0};
-    static uint8_t rp=0;
-    static uint8_t expected=0;
-    static uint8_t sysex=0;
+    static struct midi_uart mi={
+        .uart_id=2,
+        .recv.u32=0,
+        .rp=0,
+        .expected=0,
+        .sysex=0
+    };
     atomIntEnter();
 
+    uint8_t data = 'A';
     if (((USART_CR1(USART2) & USART_CR1_RXNEIE) != 0) &&
             ((USART_SR(USART2) & USART_SR_RXNE) != 0)) {
         data = usart_recv(USART2);
-        u_write(1,(uint8_t*) ">", 1);
-        xcout(data);
-        u_write(1,(uint8_t*) "<", 1);
-        uint8_t done=0;
-        if(rp==0 || ((data&0x80) == 0x80)){
-            if(data==0xf0){
-                recv[0]=0x04;
-                recv[1]=data;
-                expected=4;
-                rp=2;
-                sysex=1;
-            }else if(data==0xf7 && sysex){
-                if(rp==2){
-                    recv[0]=0x05;
-                    expected=2;
-                }
-                if(rp==3){
-                    recv[0]=0x06;
-                    expected=3;
-                }
-                if(rp==4){
-                    recv[0]=0x07;
-                    expected=4;
-                }
-                done=1;
-                sysex=0;
-            }else{
-                sysex=0;
-                expected=midilen(data);
-                recv[0]=(data>>4)&0x0f;
-                recv[1]=data;
-                rp=2;
-                if(expected==1){
-                    recv[2]=0;
-                    recv[3]=0;
-                    done=1;
-                }
-                if(expected==2){
-                    recv[3]=0;
-                }
-                expected++;
-            }
-        }else if(rp<expected){
-            recv[rp]=data;
-            rp++;
-            if(rp>=expected){
-                if(sysex){
-                    rp=1;
-                }else{
-                    rp=2;
-                }
-                done=1;
-            }
-        }else{
-            rp=0;
-        }
-        if(done){
-            gpio_toggle(GPIOC, GPIO9);
-            xcout(recv[0]);
-            xcout(recv[1]);
-            if(expected>2)
-                xcout(recv[2]);
-            if(expected>3)
-                xcout(recv[3]);
-            u_write(1,(uint8_t*) "\r\n", 2);
-            usbd_ep_write_packet(usb, EP_MIDI_O, recv, 4);
-        }
-        //atomQueuePut(&uart2_rx,0, (uint8_t*) &data);
+        gpio_toggle(GPIOC, GPIO9);
+        process_midi_uart(data, &mi);
     }
 
     /* Check if we were called because of TXE. */
@@ -621,16 +571,21 @@ void usart2_isr(void) {
 }
 
 void usart3_isr(void) {
-    static uint8_t data = 'A';
+    static struct midi_uart mi={
+        .uart_id=3,
+        .recv.u32=0,
+        .rp=0,
+        .expected=0,
+        .sysex=0
+    };
     atomIntEnter();
 
+    uint8_t data = 'A';
     if (((USART_CR1(USART3) & USART_CR1_RXNEIE) != 0) &&
             ((USART_SR(USART3) & USART_SR_RXNE) != 0)) {
         data = usart_recv(USART3);
-        data = '3';
-        u_write(1,&data,1);
         gpio_toggle(GPIOC, GPIO8);
-        //atomQueuePut(&uart3_rx,0, (uint8_t*) &data);
+        process_midi_uart(data, &mi);
     }
 
     /* Check if we were called because of TXE. */
@@ -647,13 +602,46 @@ void usart3_isr(void) {
 }
 
 static void master_thread(uint32_t args __maybe_unused) {
+    uint8_t sendbuf[64];
     while(1){
-        atomTimerDelay(SYSTEM_TICKS_PER_SEC);
-        char buf[2]=".";
-        usbd_ep_write_packet(usb, EP_CDC0_T, buf, 1);
-        ///uint8_t status = atomQueueGet(&uart2_rx, 0, &data);
-        //if(status == ATOM_OK){
-        //}
+        uint8_t status = atomQueueGet(&midi_input, 0, (void*)&(sendbuf[0]));
+        //atomTimerDelay(SYSTEM_TICKS_PER_SEC);
+        atomTimerDelay(1);
+        //usbd_ep_write_packet(usb, EP_CDC0_T, buf, 1);
+        /*
+        xcout(status);
+        */
+        if(status == ATOM_OK){
+            s_write(1,".",1);
+            uint8_t sbp=0;
+            goto t1;
+            while((sbp+=4)<60){
+                status = atomQueueGet(&midi_input, -1, (void*)&(sendbuf[sbp]));
+                if(status != ATOM_OK){
+                    break;
+                };
+                s_write(1,"+",1);
+t1:
+                if((sendbuf[sbp]&0x0f)==0x05 ||
+                        (sendbuf[sbp]&0x0f)==0x06 ||
+                        (sendbuf[sbp]&0x0f)==0x07){
+                    s_write(1,"T",1);
+                    sendbuf[sbp+4]=(sendbuf[sbp]&0xf0) | 0x0f;
+                    sbp+=4;
+                    sendbuf[sbp+1]=0xfe;
+                    sendbuf[sbp+2]=0;
+                    sendbuf[sbp+3]=0;
+                }
+            }
+            xcout(sbp);
+            int i=0;
+            s_write(1,":",1);
+            for(i=0;i<sbp;i++){
+                xcout(sendbuf[i]);
+            }
+            usbd_ep_write_packet(usb, EP_MIDI_O, sendbuf, sbp);
+            s_write(1,"\r\n",2);
+        }
         //usbd_poll(usb);
     }
 }
@@ -753,21 +741,35 @@ int main(void) {
             fault(1);
 
 
-        if (atomQueueCreate (&uart1_rx, uart1_rx_storage, sizeof(uint8_t), sizeof(uart1_rx_storage)) != ATOM_OK) 
+        if (atomQueueCreate (&uart1_rx, uart1_rx_storage, sizeof(uint8_t), 
+                    sizeof(uart1_rx_storage)) != ATOM_OK) 
             fault(2);
-        if (atomQueueCreate (&uart1_tx, uart1_tx_storage, sizeof(uint8_t), sizeof(uart1_tx_storage)) != ATOM_OK) 
+        if (atomQueueCreate (&uart1_tx, uart1_tx_storage, sizeof(uint8_t), 
+                    sizeof(uart1_tx_storage)) != ATOM_OK) 
             fault(3);
-        if (atomQueueCreate (&uart2_rx, uart2_rx_storage, sizeof(uint8_t), sizeof(uart2_rx_storage)) != ATOM_OK) 
+        /*
+        if (atomQueueCreate (&uart2_rx, uart2_rx_storage, sizeof(uint8_t), 
+                    sizeof(uart2_rx_storage)) != ATOM_OK) 
             fault(4);
-        if (atomQueueCreate (&uart2_tx, uart2_tx_storage, sizeof(uint8_t), sizeof(uart2_tx_storage)) != ATOM_OK) 
+            */
+        if (atomQueueCreate (&uart2_tx, uart2_tx_storage, sizeof(uint8_t), 
+                    sizeof(uart2_tx_storage)) != ATOM_OK) 
             fault(5);
-        if (atomQueueCreate (&uart3_rx, uart3_rx_storage, sizeof(uint8_t), sizeof(uart3_rx_storage)) != ATOM_OK) 
+        /*
+        if (atomQueueCreate (&uart3_rx, uart3_rx_storage, sizeof(uint8_t), 
+                    sizeof(uart3_rx_storage)) != ATOM_OK) 
             fault(6);
-        if (atomQueueCreate (&uart3_tx, uart3_tx_storage, sizeof(uint8_t), sizeof(uart3_tx_storage)) != ATOM_OK) 
+            */
+        if (atomQueueCreate (&uart3_tx, uart3_tx_storage, sizeof(uint8_t), 
+                    sizeof(uart3_tx_storage)) != ATOM_OK) 
             fault(7);
+        if (atomQueueCreate (&midi_input, (uint8_t *)midi_input_storage, 
+                    sizeof(uint32_t), 
+                    sizeof(midi_input_storage)/sizeof(uint32_t)) != ATOM_OK) 
+            fault(8);
         /*
         if (atomQueueCreate (&usbmidi_send, usbmidi_send_storage, sizeof(uint8_t), sizeof(usbmidi_send_storage)) != ATOM_OK) 
-            fault(8);
+            fault(9);
             */
 
         atomThreadCreate(&master_thread_tcb, 10, master_thread, 0,

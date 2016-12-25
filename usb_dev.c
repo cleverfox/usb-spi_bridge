@@ -383,7 +383,6 @@ static const char * usb_strings[] = {
 /* Buffer to be used for control requests. */
 uint8_t usbd_control_buffer[256];
 
-
 usbd_device * init_usb(){
     usbd_device *usbd_dev;
     usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev, &config, 
