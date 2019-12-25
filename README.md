@@ -1,3 +1,3 @@
-# usb-midi
+# usb-spi
 
-USB - midi translator
+USB - SPI bridge

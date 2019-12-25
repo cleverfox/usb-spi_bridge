@@ -17,7 +17,7 @@
 ## along with this library.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-BINARY = usbmidi
+BINARY = usbspi
 
 LDSCRIPT = stm32-h103.ld
 
@@ -46,7 +46,8 @@ bin: main.elf
 	arm-none-eabi-objcopy -Obinary main.elf main.bin
 
 install: bin
-	st-flash write main.bin 0x8000000
+	echo st-flash write main.bin 0x8000000
+	arm-none-eabi-gdb main.elf -ex "target extended-remote /dev/cuaU3" -ex "monitor swdp_scan" -ex "attach 1" -ex "load" -ex detach -ex "quit"
 
 atom:
 	./build_atom.sh

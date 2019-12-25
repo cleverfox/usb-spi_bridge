@@ -5,57 +5,6 @@
 #include "hw.h"
 
 
-void init_hw(void){
-    /*
-    //leds
-    gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO4|GPIO5);
-    gpio_set(GPIOC, GPIO4|GPIO5);
-
-    //Motor phases
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO0|GPIO1);
-    gpio_set(GPIOB, GPIO0|GPIO1);
-
-    //SBR
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO8);
-    gpio_set(GPIOB, GPIO8);
-
-    //SM
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO9);
-    gpio_clear(GPIOB, GPIO9);
-
-    //ZP (beeper)
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO5);
-    gpio_clear(GPIOB, GPIO5);
-
-    //ST1
-    gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO0);
-    gpio_clear(GPIOC, GPIO0);
-
-    //ST2
-    gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO1);
-    gpio_clear(GPIOC, GPIO1);
-    
-    //PRIN
-    gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO14);
-    gpio_clear(GPIOB, GPIO14);
-
-    //ONV
-    gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO2);
-    gpio_set(GPIOC, GPIO2);
-
-    gpio_set_mode(GPIOC, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN, GPIO7);
-    gpio_clear(GPIOC, GPIO7);
-
-    //KN1
-    gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_PULL_UPDOWN, GPIO12);
-    gpio_set(GPIOA, GPIO12);
-    exti_set_trigger (EXTI12, EXTI_TRIGGER_FALLING);
-    exti_select_source (EXTI12, GPIOA);
-    exti_enable_request (EXTI12);
-    nvic_enable_irq(NVIC_EXTI15_10_IRQ);
-    */
-}
-
 void usart3_setup(void) {
     nvic_enable_irq(NVIC_USART3_IRQ);
 
@@ -139,8 +88,8 @@ void usart1_setup(void) {
 
 void usart_setup(void) {
     usart1_setup();
-    usart2_setup();
-    usart3_setup();
+//    usart2_setup();
+//    usart3_setup();
 }
 
 
