@@ -125,7 +125,7 @@ LDLIBS		+= -l$(LIBNAME)
 .SECONDEXPANSION:
 .SECONDARY:
 
-all: elf
+all: elf libatomthreads.a
 
 elf: $(BINARY).elf
 bin: $(BINARY).bin

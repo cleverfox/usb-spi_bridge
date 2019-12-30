@@ -38,6 +38,9 @@ OBJS = hw.o cortexm3_macro.o usb_dev.o
 
 include Makefile.rules
 
+libatomthreads.a:
+	sh build_atom.sh
+
 #LDLIBS += -L/usr/local/gcc-arm-embedded-5_4-2016q2-20160622/arm-none-eabi/lib -lc_nano
 OBJS += -L. -latomthreads
 LDLIBS += -lc_nano

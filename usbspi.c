@@ -393,6 +393,7 @@ int main(void) {
             GPIO0|GPIO1|GPIO2|GPIO3);
         gpio_clear(GPIOC, GPIO0|GPIO1|GPIO2|GPIO3);
 
+        /*
         usart_send_blocking(USART1, '\r');
         usart_send_blocking(USART1, '\n');
         usart_send_blocking(USART1, 'p');
@@ -403,6 +404,7 @@ int main(void) {
         usart_send_blocking(USART1, 'd');
         usart_send_blocking(USART1, '\r');
         usart_send_blocking(USART1, '\n');
+        */
         
         usb=init_usb();
         usbd_register_set_config_callback(usb, usb_set_config);
@@ -438,6 +440,7 @@ int s_write(int file, char *ptr, int len) {
     return u_write(file, (uint8_t *)ptr,len);
 };
 
+#if 0
 int u_write(int file, uint8_t *ptr, int len) {
     int i;
     for (i = 0; i < len; i++){
@@ -454,3 +457,12 @@ int u_write(int file, uint8_t *ptr, int len) {
     }
     return i;
 }
+#else
+int u_write(int file, uint8_t *ptr, int len) {
+  (void)file;
+  (void)ptr;
+  (void)len;
+  return 0;
+}
+#endif
+
