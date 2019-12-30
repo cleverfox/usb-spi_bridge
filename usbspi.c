@@ -21,6 +21,9 @@ static uint8_t idle_stack[256];
 static uint8_t master_thread_stack[512];
 static ATOM_TCB master_thread_tcb;
 
+static uint8_t uart2usb_thread_stack[512];
+static ATOM_TCB uart2usb_thread_tcb;
+
 struct spi_transfer_storage {
   uint8_t buf[34];
   uint8_t len;
@@ -61,7 +64,7 @@ void xcout(unsigned char c){
     s_write(1,s,2);
 }
 
-static void cdcacm_data_rx_cb(usbd_device *usbd_dev, uint8_t ep) {
+static void cdcacm0_data_rx_cb(usbd_device *usbd_dev, uint8_t ep) {
     (void)ep;
     struct spi_transfer_storage sts;
     sts.len = usbd_ep_read_packet(usbd_dev, EP_CDC0_R, sts.buf, sizeof(sts.buf));
@@ -71,6 +74,19 @@ static void cdcacm_data_rx_cb(usbd_device *usbd_dev, uint8_t ep) {
         usbd_ep_write_packet(usbd_dev, EP_CDC0_T, "", 0);
       }
     }
+}
+
+static void cdcacm1_data_rx_cb(usbd_device *usbd_dev, uint8_t ep) {
+  (void)ep;
+  char *buffer[64];
+  int len = usbd_ep_read_packet(usbd_dev, EP_CDC1_R, buffer, sizeof(buffer));
+  if (len) {
+    int i;
+    for(i=0;i<len;i++){
+      atomQueuePut(&uart1_tx,-1, (uint8_t*) &buffer[i]);
+    }
+    USART_CR1(USART1) |= USART_CR1_TXEIE;
+  }
 }
 
 static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *req, uint8_t **buf,
@@ -99,14 +115,50 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
         local_buf[8] = req->wValue & 3;
         local_buf[9] = 0;
         usbd_ep_write_packet(usbd_dev, 0x83, buf, 10);
-        return 1;
+        return USBD_REQ_HANDLED;
       }
     case USB_CDC_REQ_SET_LINE_CODING: 
       {
-        if(*len < sizeof(struct usb_cdc_line_coding))
-          return 0; 
-        memcpy(&linecoding,*buf,sizeof(struct usb_cdc_line_coding));
-        return 1;
+        switch (req->wIndex) {
+          case 0:  //SPI port
+            return USBD_REQ_HANDLED;
+          case 2: //UART
+            if(*len < sizeof(struct usb_cdc_line_coding))
+              return USBD_REQ_NOTSUPP; 
+            memcpy(&linecoding,*buf,sizeof(struct usb_cdc_line_coding));
+            usart_set_baudrate(USART1, linecoding.dwDTERate);
+            if (linecoding.bParityType)
+              usart_set_databits(USART1, linecoding.bDataBits + 1);
+            else
+              usart_set_databits(USART1, linecoding.bDataBits);
+
+            switch(linecoding.bCharFormat) {
+              case 0:
+                usart_set_stopbits(USART1, USART_STOPBITS_1);
+                break;
+              case 1:
+                usart_set_stopbits(USART1, USART_STOPBITS_1_5);
+                break;
+              case 2:
+                usart_set_stopbits(USART1, USART_STOPBITS_2);
+                break;
+            }
+
+            switch(linecoding.bParityType) {
+              case 0:
+                usart_set_parity(USART1, USART_PARITY_NONE);
+                break;
+              case 1:
+                usart_set_parity(USART1, USART_PARITY_ODD);
+                break;
+              case 2:
+                usart_set_parity(USART1, USART_PARITY_EVEN);
+                break;
+            }
+            return USBD_REQ_HANDLED;
+          default:
+            return USBD_REQ_NOTSUPP; 
+        }
       }
     case 0x88:
       {
@@ -115,7 +167,6 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
         if(*len > 0 && req->wValue==0x10) //echo
           usbd_ep_write_packet(usbd_dev, 0x83, *buf, *len);
         else if(*len == 0 && req->wValue==0x11){
-          s_write(1,"nss",3);
           switch(req->wIndex){
             case 0: selected_nss=GPIO12;break;
             case 1: selected_nss=GPIO3;break;
@@ -124,22 +175,18 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
             case 4: selected_nss=GPIO6;break;
             default:selected_nss=GPIO12;
           }
-          xcout(selected_nss);
-          res=1;
         } else if(*len == 0 && req->wValue==0x12){
           if(req->wIndex & 1) gpio_clear(GPIOB, GPIO12);
           if(req->wIndex & 2) gpio_clear(GPIOB, GPIO3);
           if(req->wIndex & 4) gpio_clear(GPIOB, GPIO4);
           if(req->wIndex & 8) gpio_clear(GPIOB, GPIO5);
           if(req->wIndex & 16) gpio_clear(GPIOB, GPIO6);
-          res=1;
         } else if(*len == 0 && req->wValue==0x13){
           if(req->wIndex & 1) gpio_set(GPIOB, GPIO12);
           if(req->wIndex & 2) gpio_set(GPIOB, GPIO3);
           if(req->wIndex & 4) gpio_set(GPIOB, GPIO4);
           if(req->wIndex & 8) gpio_set(GPIOB, GPIO5);
           if(req->wIndex & 16) gpio_set(GPIOB, GPIO6);
-          res=1;
         } else if(*len == 0 && req->wValue==0x14){
           uint8_t port=gpio_port_read(GPIOB);
           res=0;
@@ -150,6 +197,9 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
           if(port & GPIO6)  res|=16;
         } else if(*len == 0 && req->wValue==0x15){
           uint8_t port=gpio_port_read(GPIOA);
+          u_write(1,(uint8_t*)"I",1);
+          xcout(port);
+          u_write(1,(uint8_t*)"\r\n",2);
           res=port & 0x0f;
         }else{
           u_write(1,(uint8_t*)"X",1);
@@ -162,11 +212,11 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
           }
           u_write(1,(uint8_t*)"\r\n",2);
           usbd_ep_write_packet(usbd_dev, 0x83, &linecoding, sizeof(struct usb_cdc_line_coding));
-          return 1;
+          return USBD_REQ_HANDLED;
         }
         if(res>=0){
-          uint8_t r=res;
-          usbd_ep_write_packet(usbd_dev, 0x83, &r, 1);
+          uint8_t r[]={res};
+          usbd_ep_write_packet(usbd_dev, 0x83, r, 1);
         }
       }
   }
@@ -175,9 +225,13 @@ static int cdcacm_control_request(usbd_device *usbd_dev, struct usb_setup_data *
 
 static void usb_set_config(usbd_device *usbd_dev, uint16_t wValue) {
     (void)wValue;
-    usbd_ep_setup(usbd_dev, EP_CDC0_R, USB_ENDPOINT_ATTR_BULK, 64, cdcacm_data_rx_cb);
+    usbd_ep_setup(usbd_dev, EP_CDC0_R, USB_ENDPOINT_ATTR_BULK, 64, cdcacm0_data_rx_cb);
     usbd_ep_setup(usbd_dev, EP_CDC0_T, USB_ENDPOINT_ATTR_BULK, 64, NULL);
     usbd_ep_setup(usbd_dev, EP_CDC0_I, USB_ENDPOINT_ATTR_INTERRUPT, 16, NULL);
+
+    usbd_ep_setup(usbd_dev, EP_CDC1_R, USB_ENDPOINT_ATTR_BULK, 64, cdcacm1_data_rx_cb);
+    usbd_ep_setup(usbd_dev, EP_CDC1_T, USB_ENDPOINT_ATTR_BULK, 64, NULL);
+    usbd_ep_setup(usbd_dev, EP_CDC1_I, USB_ENDPOINT_ATTR_INTERRUPT, 16, NULL);
 
     usbd_register_control_callback(
             usbd_dev,
@@ -193,16 +247,7 @@ void usart1_isr(void) {
     if (((USART_CR1(USART1) & USART_CR1_RXNEIE) != 0) &&
             ((USART_SR(USART1) & USART_SR_RXNE) != 0)) {
         data = usart_recv(USART1);
-
-        if(data=='\r' || data=='\n'){
-            data='\r';
-            u_write(1,(uint8_t*) &data, 1);
-            data='\n';
-            u_write(1,(uint8_t*) &data, 1);
-        }else{
-            u_write(1,(uint8_t*) &data, 1);
-        }
-
+        atomQueuePut(&uart1_rx, -1, (uint8_t*) &data);
     }
 
     /* Check if we were called because of TXE. */
@@ -218,12 +263,28 @@ void usart1_isr(void) {
     atomIntExit(0);
 }
 
+static void uart2usb_thread(uint32_t args __maybe_unused) {
+  s_write(1,"UART2USB\r\n",8);
+  uint8_t data[16];
+  while(1){
+    uint8_t status = atomQueueGet(&uart1_rx, 0, &data[0]);
+    if(status == ATOM_OK){
+      int i=1;
+      while(i<15 && atomQueueGet(&uart1_rx, -1, &data[i])==ATOM_OK){
+        i++;
+      }
+      usbd_ep_write_packet(usb, EP_CDC1_T, data, i);
+    }
+  }
+}
+
 static void master_thread(uint32_t args __maybe_unused) {
   s_write(1,"MASTER\r\n",8);
   struct spi_transfer_storage sts;
   while(1){
     uint8_t status = atomQueueGet(&spi_in, 0, (void*)&sts);
     if(status == ATOM_OK){
+      gpio_clear(GPIOC, GPIO13);
       s_write(1,"+",1);
       xcout(selected_nss);
       xcout(sts.len);
@@ -238,6 +299,7 @@ static void master_thread(uint32_t args __maybe_unused) {
     }else{
       s_write(1,"-",1);
     }
+    gpio_set(GPIOC, GPIO13);
     s_write(1,"DONE\r\n",6);
   }
 }
@@ -269,7 +331,7 @@ static void spi_setup(void) {
    * Data frame format: 8-bit
    * Frame format: MSB First
    */
-  spi_init_master(SPI2, SPI_CR1_BAUDRATE_FPCLK_DIV_16, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
+  spi_init_master(SPI2, SPI_CR1_BAUDRATE_FPCLK_DIV_64, SPI_CR1_CPOL_CLK_TO_0_WHEN_IDLE,
       SPI_CR1_CPHA_CLK_TRANSITION_2, SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
 
   /*
@@ -317,6 +379,9 @@ int main(void) {
         //USB PULLUP
         gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO15);
         gpio_clear(GPIOA, GPIO15);
+        //LED
+        gpio_set_mode(GPIOC, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO13);
+        gpio_set(GPIOC, GPIO13);
 
         /* extra gpo/NSS B3...B6 */
         gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL,
@@ -361,6 +426,8 @@ int main(void) {
 
         atomThreadCreate(&master_thread_tcb, 10, master_thread, 0,
                 master_thread_stack, sizeof(master_thread_stack), TRUE);
+        atomThreadCreate(&uart2usb_thread_tcb, 10, uart2usb_thread, 0,
+                uart2usb_thread_stack, sizeof(uart2usb_thread_stack), TRUE);
 
         atomOSStart();
         while (1){

@@ -4,7 +4,7 @@ it's a USB CDC device, supports transfers up to 64 bytes in length
 
 ## pinout 
 
- * PB12 - NSS/GPI0 (default)
+ * PB12 - NSS/GPO0 (default)
  * PB13 - SCK
  * PB14 - MISO
  * PB15 - MOSI
@@ -19,10 +19,13 @@ it's a USB CDC device, supports transfers up to 64 bytes in length
  * PB2 - GPI2
  * PB3 - GPI3
 
+ * A9  - UART TX
+ * A10 - UART RX
+
  * A11 - DM
  * A12 - DP
  * A15 - USB PULLUP - resistor to A12
-
+ * C13 - LED
 
 ## Control endpoint messages:
 
@@ -49,3 +52,4 @@ it's a USB CDC device, supports transfers up to 64 bytes in length
    * bit 3 - GPI3
 
 
+second CDC device act as UART bridge

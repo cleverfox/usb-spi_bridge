@@ -30,7 +30,7 @@ static const struct {
         .bcdCDC = 0x0110,
     },
     .call_mgmt = {
-        .bFunctionLength = 
+        .bFunctionLength =
             sizeof(struct usb_cdc_call_management_descriptor),
         .bDescriptorType = CS_INTERFACE,
         .bDescriptorSubtype = USB_CDC_TYPE_CALL_MANAGEMENT,
@@ -104,12 +104,107 @@ static const struct usb_interface_descriptor data0_iface[] = {{
     .endpoint = data0_endp,
 }};
 
-static const struct usb_interface ifaces[] = {{
-    .num_altsetting = 1,
-        .altsetting = comm0_iface,
+
+
+static const struct {
+    struct usb_cdc_header_descriptor header;
+    struct usb_cdc_call_management_descriptor call_mgmt;
+    struct usb_cdc_acm_descriptor acm;
+    struct usb_cdc_union_descriptor cdc_union;
+} __attribute__((packed)) cdcacm1_functional_descriptors = {
+    .header = {
+        .bFunctionLength = sizeof(struct usb_cdc_header_descriptor),
+        .bDescriptorType = CS_INTERFACE,
+        .bDescriptorSubtype = USB_CDC_TYPE_HEADER,
+        .bcdCDC = 0x0110,
+    },
+    .call_mgmt = {
+        .bFunctionLength =
+            sizeof(struct usb_cdc_call_management_descriptor),
+        .bDescriptorType = CS_INTERFACE,
+        .bDescriptorSubtype = USB_CDC_TYPE_CALL_MANAGEMENT,
+        .bmCapabilities = 0,
+        .bDataInterface = IF_CDAT1,
+    },
+    .acm = {
+        .bFunctionLength = sizeof(struct usb_cdc_acm_descriptor),
+        .bDescriptorType = CS_INTERFACE,
+        .bDescriptorSubtype = USB_CDC_TYPE_ACM,
+        .bmCapabilities = 0,
+    },
+    .cdc_union = {
+        .bFunctionLength = sizeof(struct usb_cdc_union_descriptor),
+        .bDescriptorType = CS_INTERFACE,
+        .bDescriptorSubtype = USB_CDC_TYPE_UNION,
+        .bControlInterface = IF_COMM1,
+        .bSubordinateInterface0 = IF_CDAT1,
+    }
+};
+
+static const struct usb_endpoint_descriptor comm1_endp[] = {{
+    .bLength = USB_DT_ENDPOINT_SIZE,
+        .bDescriptorType = USB_DT_ENDPOINT,
+        .bEndpointAddress = EP_CDC1_I,
+        .bmAttributes = USB_ENDPOINT_ATTR_INTERRUPT,
+        .wMaxPacketSize = 16,
+        .bInterval = 255,
+}};
+static const struct usb_endpoint_descriptor data1_endp[] = {{
+    .bLength = USB_DT_ENDPOINT_SIZE,
+        .bDescriptorType = USB_DT_ENDPOINT,
+        .bEndpointAddress = EP_CDC1_R,
+        .bmAttributes = USB_ENDPOINT_ATTR_BULK,
+        .wMaxPacketSize = 64,
+        .bInterval = 1,
 }, {
-    .num_altsetting = 1,
-        .altsetting = data0_iface,
+    .bLength = USB_DT_ENDPOINT_SIZE,
+        .bDescriptorType = USB_DT_ENDPOINT,
+        .bEndpointAddress = EP_CDC1_T,
+        .bmAttributes = USB_ENDPOINT_ATTR_BULK,
+        .wMaxPacketSize = 64,
+        .bInterval = 1,
+}};
+
+static const struct usb_interface_descriptor comm1_iface[] = {{
+    .bLength = USB_DT_INTERFACE_SIZE,
+    .bDescriptorType = USB_DT_INTERFACE,
+    .bInterfaceNumber = IF_COMM1,
+    .bAlternateSetting = 0,
+    .bNumEndpoints = 1,
+    .bInterfaceClass = USB_CLASS_CDC,
+    .bInterfaceSubClass = USB_CDC_SUBCLASS_ACM,
+    .bInterfaceProtocol = USB_CDC_PROTOCOL_AT,
+    .iInterface = 1,
+    .endpoint = comm1_endp,
+    .extra = &cdcacm1_functional_descriptors,
+    .extralen = sizeof(cdcacm1_functional_descriptors)
+}};
+
+static const struct usb_interface_descriptor data1_iface[] = {{
+    .bLength = USB_DT_INTERFACE_SIZE,
+    .bDescriptorType = USB_DT_INTERFACE,
+    .bInterfaceNumber = IF_CDAT1,
+    .bAlternateSetting = 0,
+    .bNumEndpoints = 2,
+    .bInterfaceClass = USB_CLASS_DATA,
+    .bInterfaceSubClass = 0,
+    .bInterfaceProtocol = 0,
+    .iInterface = 1,
+    .endpoint = data1_endp,
+}};
+
+static const struct usb_interface ifaces[] = {{
+  .num_altsetting = 1,
+  .altsetting = comm0_iface,
+}, {
+  .num_altsetting = 1,
+  .altsetting = data0_iface,
+}, {
+  .num_altsetting = 1,
+  .altsetting = comm1_iface,
+}, {
+  .num_altsetting = 1,
+  .altsetting = data1_iface,
 } };
 
 /*
@@ -120,12 +215,11 @@ static const struct usb_config_descriptor config = {
     .bDescriptorType = USB_DT_CONFIGURATION,
     .wTotalLength = 0, /* can be anything, it is updated automatically
                           when the usb code prepares the descriptor */
-    .bNumInterfaces = 2, /* control and data */
+    .bNumInterfaces = 4, /* control and data */
     .bConfigurationValue = 1,
     .iConfiguration = 0,
     .bmAttributes = 0x80, /* bus powered */
     .bMaxPower = 0x32,
-
     .interface = ifaces,
 };
 
@@ -142,7 +236,7 @@ uint8_t usbd_control_buffer[256];
 
 usbd_device * init_usb(){
     usbd_device *usbd_dev;
-    usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev, &config, 
+    usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev, &config,
             usb_strings, 3, usbd_control_buffer, sizeof(usbd_control_buffer));
     return usbd_dev;
 }

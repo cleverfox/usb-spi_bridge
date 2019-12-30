@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
   int value, int index, 
   char *bytes, int size, int timeout);
   */
-  memcpy(bufread,"preved",6);
+  memcpy(bufread,"test12",6);
   /*
   ret=usb_control_msg(handle, 
       33, 
@@ -127,6 +127,15 @@ int main(int argc, char **argv) {
     printf("%02x ",bufread[i]);
   }
   printf("\n");
+
+  for(i=0;i<3;i++){
+    ret=usb_bulk_write(handle, 0x01, "va", 2, 1000);
+    printf("bwr ret %d\n",ret);
+
+    ret=usb_bulk_read(handle, 0x82, bufread, 32, 1);
+    printf("bre ret %d\n",ret);
+  }
+
 
 
   usb_close(handle);
