@@ -17,7 +17,7 @@
 ## along with this library.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-BINARY = usbspi
+BINARY = vkbd
 
 LDSCRIPT = stm32-h103.ld
 
@@ -33,7 +33,7 @@ CFLAGS += -D_XOPEN_SOURCE=0
 CFLAGS += -Ilibopencm3/include -Ichargen
 #CFLAGS += -I/usr/local/gcc-arm-embedded-5_4-2016q2-20160622/arm-none-eabi/include
 
-OBJS = hw.o cortexm3_macro.o usb_dev.o
+OBJS = hw.o cortexm3_macro.o usb_dev.o ws2812b.o
 #tools.o  hw.o sleep.o iic.o chargen.o serial.o
 
 include Makefile.rules
