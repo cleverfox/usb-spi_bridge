@@ -49,7 +49,7 @@ void ws2812b_setup(void) {
   rcc_periph_clock_enable(RCC_DMA1);
   rcc_periph_clock_enable(RCC_SPI2);
   gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ,
-      GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO15|GPIO13 );
+      GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO15 );
 
   spi_reset(SPI2);
 

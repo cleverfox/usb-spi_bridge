@@ -7,6 +7,7 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/cm3/systick.h>
+#include <libopencm3/stm32/can.h>
 
 #include <atom.h>
 #include <atomsem.h>
@@ -17,16 +18,16 @@
 
 #include "hw.h"
 
-
 #define DEBUG 1
 
-#define WHITE   0xffffff
-#define RED     0xff0000
-#define GREEN   0x00Ff00
-#define BLUE    0x0000fF
-#define YELLOW  0xffFf00
-#define CYAN    0x00Ff99
-#define MAGENTA 0xFf00ff
+#define C_OFF     0
+#define C_WHITE   1
+#define C_RED     2
+#define C_GREEN   3
+#define C_BLUE    4
+#define C_YELLOW  5
+#define C_CYAN    6
+#define C_MAGENTA 7
 
 static uint8_t idle_stack[256];
 static uint8_t master_thread_stack[512];
@@ -50,18 +51,38 @@ int s_write(int file, char *ptr, int len);
 void xcout(unsigned char c);
 void x2cout(uint16_t c);
 
+uint32_t colors[16] = {
+  0,
+  0xffffff,
+  0xff0000,
+  0x00Ff00,
+  0x0000fF,
+  0xffFf00,
+  0x00Ff99,
+  0xFf00ff,
+
+  0xffffff,
+  0xff0000,
+  0x00Ff00,
+  0x0000fF,
+  0xffFf00,
+  0x00Ff99,
+  0xFf00ff,
+  0};
+
+
 uint8_t panel_phase=0;
 uint8_t panel_btns[8];
 uint8_t panel_btev=0;
 uint32_t leds[8]={
-  WHITE,
-  RED,
-  CYAN,
-  GREEN,
-  MAGENTA,
-  BLUE,
-  YELLOW,
-  WHITE
+  0x550055,
+  0x001100,
+  0x001100,
+  0x001100,
+  0x001100,
+  0x001100,
+  0x001100,
+  0x001100
 };
 
 #define fault(code) _fault(code,__LINE__,__FUNCTION__)
@@ -126,7 +147,21 @@ static void scan_thread(uint32_t args __maybe_unused) {
         s_write(1,"R",1);
       }
       xcout(evt & 0x7F);
-      s_write(1,"\r\n",2);
+      int8_t cr=-1;
+      uint8_t evbuf[2];
+      evbuf[0]=1;
+      evbuf[1]=evt;
+      if ((cr=can_transmit(CAN1,
+            0x0F00F01,/* (EX/ST)ID: CAN ID */
+            true, /* IDE: CAN ID extended? */
+            false, /* RTR: Request transmit? */
+            2,     /* DLC: Data length */
+            evbuf)) == -1){
+        s_write(1,"CAN_ERR\r\n",9);
+      }else{
+        xcout((uint8_t)cr);
+        s_write(1,"\r\n",2);
+      }
     }
     //atomTimerDelay(SYSTEM_TICKS_PER_SEC>>6);
   }
@@ -150,15 +185,19 @@ static void master_thread(uint32_t args __maybe_unused) {
         if(recv[0]=='C' && rlen==3){
           int8_t chan=scan(recv[1]);
           if(chan>=0 && chan<8){
-            if(recv[2]=='k') leds[chan]=0; else
-            if(recv[2]=='0') leds[chan]=0; else
-            if(recv[2]=='m') leds[chan]=MAGENTA; else
-            if(recv[2]=='r') leds[chan]=RED; else
-            if(recv[2]=='g') leds[chan]=GREEN; else
-            if(recv[2]=='b') leds[chan]=BLUE; else
-            if(recv[2]=='c') leds[chan]=CYAN; else
-            if(recv[2]=='m') leds[chan]=MAGENTA; else
-            if(recv[2]=='y') leds[chan]=YELLOW;
+            if(recv[2]=='k') leds[chan]=colors[C_OFF]; else
+            if(recv[2]=='w') leds[chan]=colors[C_WHITE]; else
+            if(recv[2]=='m') leds[chan]=colors[C_MAGENTA]; else
+            if(recv[2]=='r') leds[chan]=colors[C_RED]; else
+            if(recv[2]=='g') leds[chan]=colors[C_GREEN]; else
+            if(recv[2]=='b') leds[chan]=colors[C_BLUE]; else
+            if(recv[2]=='c') leds[chan]=colors[C_CYAN]; else
+            if(recv[2]=='m') leds[chan]=colors[C_MAGENTA]; else
+            if(recv[2]=='y') leds[chan]=colors[C_YELLOW]; else {
+              int8_t p=scan(recv[2]);
+              if(p>=0)
+                leds[chan]=colors[p];
+            }
           }
         }else if(recv[0]=='C' && rlen==5){
           int8_t chan=scan(recv[1]);
@@ -166,7 +205,7 @@ static void master_thread(uint32_t args __maybe_unused) {
             int8_t red=scan(recv[2]);
             int8_t green=scan(recv[3]);
             int8_t blue=scan(recv[4]);
-            uint32_t rgb=(red<<16)|(green<<20)|(green<<12)|(green<<8)|(blue<<4)|blue;
+            uint32_t rgb=(red<<16)|(red<<20)|(green<<12)|(green<<8)|(blue<<4)|blue;
             leds[chan]=rgb;
           }
 /*        }else if(recv[0]=='M' && rlen==5){
@@ -187,29 +226,23 @@ static void master_thread(uint32_t args __maybe_unused) {
         }else{
           s_write(1,"~",1);
           xcout(rlen);
-          if(recv[0]=='1') leds[0]=WHITE;
-          if(recv[0]=='2') leds[0]=RED;
-          if(recv[0]=='3') leds[0]=GREEN;
-          if(recv[0]=='4') leds[0]=BLUE;
-          if(recv[0]=='5') leds[0]=CYAN;
-          if(recv[0]=='6') leds[0]=MAGENTA;
-          if(recv[0]=='7') leds[0]=YELLOW;
+
           if(recv[0]=='q' || recv[0]=='a'){
-            uint16_t l=(leds[0]&0xf00) >> 8;
-            if(recv[0]=='q') if(l<0xff) l++;
+            uint16_t l=(leds[0]&0xf0000) >> 16;
+            if(recv[0]=='q') if(l<0xf) l++;
             if(recv[0]=='a') if(l>0x0) l--;
             x2cout(leds[0]);
-            leds[0]=(leds[0]&0xff)|(l<<8);
+            leds[0]=(leds[0]&0xffff)|(l<<16)|(l<<20);
             s_write(1," ",1);
             x2cout(leds[0]);
           }
 
           if(recv[0]=='w' || recv[0]=='s'){
-            uint16_t l=(leds[0]&0xf0) >> 4;
-            if(recv[0]=='w') if(l<0xff) l++;
+            uint32_t l=(leds[0]&0xf00) >> 8;
+            if(recv[0]=='w') if(l<0xf) l++;
             if(recv[0]=='s') if(l>0x0) l--;
             x2cout(leds[0]);
-            leds[0]=(leds[0]&0xf0f)|(l<<4);
+            leds[0]=(leds[0]&0xff00ff)|(l<<8)|(l<<12);
             s_write(1," ",1);
             x2cout(leds[0]);
           }
@@ -217,10 +250,10 @@ static void master_thread(uint32_t args __maybe_unused) {
 
           if(recv[0]=='e' || recv[0]=='d'){
             uint16_t l=(leds[0]&0xf);
-            if(recv[0]=='e') if(l<0xff) l++;
+            if(recv[0]=='e') if(l<0xf) l++;
             if(recv[0]=='d') if(l>0x0) l--;
             x2cout(leds[0]);
-            leds[0]=(leds[0]&0xff0)|l;
+            leds[0]=(leds[0]&0xffff00)|l|(l<<4);
             s_write(1," ",1);
             x2cout(leds[0]);
           }
@@ -345,6 +378,92 @@ void tim2_isr(void) {
   atomIntExit(0);
 }
 
+static void can_setup(void) {
+  /* Enable peripheral clocks. */
+  rcc_periph_clock_enable(RCC_AFIO);
+  rcc_periph_clock_enable(RCC_GPIOA);
+  rcc_periph_clock_enable(RCC_CAN);
+  AFIO_MAPR |= AFIO_MAPR_CAN1_REMAP_PORTB;
+//  AFIO_MAPR &= ~AFIO_MAPR_CAN1_REMAP_PORTB;
+
+  /* Configure CAN pin: RX (input pull-up). */
+  gpio_set_mode(GPIOB, GPIO_MODE_INPUT,
+      GPIO_CNF_INPUT_PULL_UPDOWN, GPIO_CAN_PB_RX);
+  gpio_set(GPIOB, GPIO_CAN_PB_RX);
+
+  /* Configure CAN pin: TX. */
+  gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ,
+      GPIO_CNF_OUTPUT_ALTFN_PUSHPULL, GPIO_CAN_PB_TX);
+
+  /* NVIC setup. */
+  nvic_enable_irq(NVIC_USB_LP_CAN_RX0_IRQ);
+  nvic_set_priority(NVIC_USB_LP_CAN_RX0_IRQ, 1);
+
+  /* Reset CAN. */
+  can_reset(CAN1);
+
+  /* CAN cell init. */
+  if (can_init(CAN1,
+        false,           /* TTCM: Time triggered comm mode? */
+        true,            /* ABOM: Automatic bus-off management? */
+        false,           /* AWUM: Automatic wakeup mode? */
+        false,           /* NART: No automatic retransmission? */
+        false,           /* RFLM: Receive FIFO locked mode? */
+        false,           /* TXFP: Transmit FIFO priority? */
+        CAN_BTR_SJW_4TQ,
+        CAN_BTR_TS1_3TQ,
+        CAN_BTR_TS2_4TQ,
+        12,/* BRP+1: Baud rate prescaler */
+        false,
+        false))
+  {
+    gpio_set(GPIOC, GPIO13);		/* LED0*/
+    /* Die because we failed to initialize. */
+    while (1)
+      __asm__("nop");
+  }
+
+  can_filter_id_mask_32bit_init(
+      CAN1,
+      0,     /* Filter ID */
+      0x00f00f01, /* CAN ID */
+      0x00000000, /* CAN ID mask */
+      0,     /* FIFO assignment (here: FIFO0) */
+      true); /* Enable the filter. */
+
+  /* Enable CAN RX interrupt. */
+  can_enable_irq(CAN1, CAN_IER_FMPIE0);
+}
+
+void usb_lp_can_rx0_isr(void) {
+    atomIntEnter();
+  uint32_t id, fmi;
+  bool ext, rtr;
+  uint8_t length, data[8];
+
+  s_write(1,"CAN_RECV\r\n",10);
+  can_receive(CAN1, 0, false, &id, &ext, &rtr, &fmi, &length, data);
+  if(length==2 && (data[0]&0x0f)==6)
+    leds[(data[0] >> 4)]=colors[data[1] & 0x0f];
+  else if(length==4 && (data[0]&0xf)==6)
+    leds[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
+  else if(length==4 && (data[0]&0xf)==4)
+    colors[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
+  else if(length==5 && data[0]==2){
+    leds[0]=colors[data[1] >> 4];
+    leds[1]=colors[data[1] & 0x0f];
+    leds[2]=colors[data[2] >> 4];
+    leds[3]=colors[data[2] & 0x0f];
+    leds[4]=colors[data[3] >> 4];
+    leds[5]=colors[data[3] & 0x0f];
+    leds[6]=colors[data[4] >> 4];
+    leds[7]=colors[data[4] & 0x0f];
+  }
+
+  can_fifo_release(CAN1, 0);
+  atomIntExit(0);
+}
+
 int main(void) {
   //rcc_clock_setup_in_hsi_out_48mhz();
   rcc_clock_setup_in_hse_8mhz_out_24mhz();
@@ -361,6 +480,7 @@ int main(void) {
   AFIO_MAPR |= AFIO_MAPR_SWJ_CFG_JTAG_OFF_SW_ON;
 
   usart_setup();
+  can_setup();
 
   cm_mask_interrupts(true);
   systick_set_frequency(SYSTEM_TICKS_PER_SEC, 24000000);
