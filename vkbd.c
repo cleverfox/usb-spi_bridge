@@ -75,13 +75,13 @@ uint8_t panel_phase=0;
 uint8_t panel_btns[8];
 uint8_t panel_btev=0;
 uint32_t leds[8]={
-  0x550055,
+  0x110011,
   0x001100,
+  0x110011,
   0x001100,
+  0x110011,
   0x001100,
-  0x001100,
-  0x001100,
-  0x001100,
+  0x110011,
   0x001100
 };
 
@@ -152,11 +152,11 @@ static void scan_thread(uint32_t args __maybe_unused) {
       evbuf[0]=1;
       evbuf[1]=evt;
       if ((cr=can_transmit(CAN1,
-            0x0F00F01,/* (EX/ST)ID: CAN ID */
-            true, /* IDE: CAN ID extended? */
-            false, /* RTR: Request transmit? */
-            2,     /* DLC: Data length */
-            evbuf)) == -1){
+              0x0f313301,/* (EX/ST)ID: CAN ID */
+              true, /* IDE: CAN ID extended? */
+              false, /* RTR: Request transmit? */
+              2,     /* DLC: Data length */
+              evbuf)) == -1){
         s_write(1,"CAN_ERR\r\n",9);
       }else{
         xcout((uint8_t)cr);
@@ -402,6 +402,16 @@ static void can_setup(void) {
   /* Reset CAN. */
   can_reset(CAN1);
 
+  /*
+   * 75 - 20
+   * 150 - 10
+   * 30 - 50
+   * 15 - 100
+   * 12 - 250
+   * 6 - 500
+   * 3 - 1000
+   */
+
   /* CAN cell init. */
   if (can_init(CAN1,
         false,           /* TTCM: Time triggered comm mode? */
@@ -410,10 +420,10 @@ static void can_setup(void) {
         false,           /* NART: No automatic retransmission? */
         false,           /* RFLM: Receive FIFO locked mode? */
         false,           /* TXFP: Transmit FIFO priority? */
-        CAN_BTR_SJW_4TQ,
-        CAN_BTR_TS1_3TQ,
-        CAN_BTR_TS2_4TQ,
-        12,/* BRP+1: Baud rate prescaler */
+        CAN_BTR_SJW_1TQ,
+        CAN_BTR_TS1_4TQ,
+        CAN_BTR_TS2_3TQ,
+        6,/* BRP+1: Baud rate prescaler */
         false,
         false))
   {
@@ -426,7 +436,7 @@ static void can_setup(void) {
   can_filter_id_mask_32bit_init(
       CAN1,
       0,     /* Filter ID */
-      0x00f00f01, /* CAN ID */
+      0x0f313300, /* CAN ID */
       0x00000000, /* CAN ID mask */
       0,     /* FIFO assignment (here: FIFO0) */
       true); /* Enable the filter. */
@@ -441,24 +451,36 @@ void usb_lp_can_rx0_isr(void) {
   bool ext, rtr;
   uint8_t length, data[8];
 
-  s_write(1,"CAN_RECV\r\n",10);
   can_receive(CAN1, 0, false, &id, &ext, &rtr, &fmi, &length, data);
-  if(length==2 && (data[0]&0x0f)==6)
-    leds[(data[0] >> 4)]=colors[data[1] & 0x0f];
-  else if(length==4 && (data[0]&0xf)==6)
-    leds[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
-  else if(length==4 && (data[0]&0xf)==4)
-    colors[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
-  else if(length==5 && data[0]==2){
-    leds[0]=colors[data[1] >> 4];
-    leds[1]=colors[data[1] & 0x0f];
-    leds[2]=colors[data[2] >> 4];
-    leds[3]=colors[data[2] & 0x0f];
-    leds[4]=colors[data[3] >> 4];
-    leds[5]=colors[data[3] & 0x0f];
-    leds[6]=colors[data[4] >> 4];
-    leds[7]=colors[data[4] & 0x0f];
+  if(id==0x0f313300){
+    s_write(1,"CAN_RECV ",9);
+    xcout(length);
+    xcout(data[0]);
+    s_write(1,"\r\n",2);
+    if(length==2 && (data[0]&0x0f)==6)
+      leds[(data[0] >> 4)]=colors[data[1] & 0x0f];
+    else if(length==4 && (data[0]&0xf)==6)
+      leds[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
+    else if(length==4 && (data[0]&0xf)==4){
+      colors[(data[0] >> 4)]=(data[1] << 16) | (data[2] << 8) | (data[3]);
+      xcout(data[0]>>4);
+      xcout(colors[data[0]>>4] >> 16);
+      xcout(colors[data[0]>>4] >> 8);
+      xcout(colors[data[0]>>4]);
+    } else if(length==5 && data[0]==2){
+      leds[0]=colors[data[1] >> 4];
+      leds[1]=colors[data[1] & 0x0f];
+      leds[2]=colors[data[2] >> 4];
+      leds[3]=colors[data[2] & 0x0f];
+      leds[4]=colors[data[3] >> 4];
+      leds[5]=colors[data[3] & 0x0f];
+      leds[6]=colors[data[4] >> 4];
+      leds[7]=colors[data[4] & 0x0f];
+    }else{
+    s_write(1,"?\r\n",3);
+    }
   }
+
 
   can_fifo_release(CAN1, 0);
   atomIntExit(0);
